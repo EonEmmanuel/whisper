@@ -21,7 +21,7 @@ export async function getMe(
     res.status(200).json({ user });
   } catch (error) {
     res.status(500);
-    next();
+    next(error);
   }
 }
 
@@ -43,7 +43,7 @@ export async function authCallBack(
     if (!user) {
       const clerkUser = await clerkClient.users.getUser(clerkId);
 
-      user = new User({
+      user = await User.create({
         clerkId,
         name: clerkUser.firstName
           ? `${clerkUser.firstName} ${clerkUser.lastName || ""}`.trim()
@@ -51,6 +51,7 @@ export async function authCallBack(
         email: clerkUser.emailAddresses[0]?.emailAddress,
         avatar: clerkUser.imageUrl,
       });
+      await user.save();
     }
 
     res.status(200).json({ user });
