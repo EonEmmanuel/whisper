@@ -1,6 +1,7 @@
 import type { Response, NextFunction } from "express";
 import type { AuthRequest } from "../middleware/auth";
 import { Chat } from "../models/Chat";
+import { Types } from "mongoose";
 
 export async function getChats(
   req: AuthRequest,
@@ -12,7 +13,7 @@ export async function getChats(
 
     const chats = await Chat.find({ participants: userId })
       .populate("participants", "name email avatar")
-      .populate("lastMessagge")
+      .populate("lastMessage")
       .sort({ lastMessageAt: -1 });
 
     const formattedChats = chats.map((chat) => {
@@ -22,7 +23,7 @@ export async function getChats(
 
       return {
         _id: chat._id,
-        participants: otherParticipant,
+        participants: otherParticipant ?? null,
         lastMessage: chat.lastMessage,
         lastMessageAt: chat.lastMessageAt,
         createdAt: chat.createdAt,
@@ -44,6 +45,20 @@ export async function getOrCreateChat(
   try {
     const userId = req.userId;
     const { participantId } = req.params;
+
+    if (!participantId) {
+      res.status(400).json({ message: "Participant ID is required" });
+      return;
+    }
+
+    if (!Types.ObjectId.isValid(participantId as string)) {
+      res.status(400).json({ message: "Invalid participant Id" });
+      return;
+    }
+
+    if (userId === participantId) {
+      res.status(400).json({ message: "Cannot create chat with yourself" });
+    }
 
     // check if chat already exists
     let chat = await Chat.findOne({
