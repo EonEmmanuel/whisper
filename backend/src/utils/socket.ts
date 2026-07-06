@@ -1,0 +1,120 @@
+import { Socket, Server as SocketServer } from "socket.io";
+import { Server as HttpServer } from "http";
+import { verifyToken } from "@clerk/express";
+import { Message } from "./../models/Message";
+import { User } from "./../models/User";
+import { Chat } from "../models/Chat";
+
+// store online users in memory : userId -> socketId
+const onlineUsers: Map<string, string> = new Map();
+
+export const initializeSocket = (httpServer: HttpServer) => {
+  const allowedOrigins = [
+    "http://localhost:5173", // Vite Web Dev
+    "http://localhost:8081", // Expo mobile app
+    process.env.FRONTEND_URL, // production
+  ].filter(Boolean) as string[];
+
+  const io = new SocketServer(httpServer, { cors: { origin: allowedOrigins } });
+
+  io.use(async (socket, next) => {
+    const token = socket.handshake.auth.token; // this is what user will send from client
+    if (!token)
+      return next(new Error("Authentication error: Token is missing"));
+
+    try {
+      const session = await verifyToken(token, {
+        secretKey: process.env.CLERK_SECRET_KEY,
+      });
+
+      const clerkId = session.sub; // Extract the Clerk ID from the session
+
+      const user = await User.findOne({ clerkId });
+      if (!user) return next(new Error("Authentication error: User not found"));
+
+      socket.data.userId = user._id.toString();
+
+      next();
+    } catch (error) {
+      next(new Error("Authentication error: Invalid token"));
+    }
+  });
+
+  // this "connection" event name is special and should be written like it is
+  // it's the event that is triggered when a new client connects to the server
+  io.on("connection", (socket) => {
+    const userId = socket.data.userId;
+
+    //send list of current online users to the newly connected client
+    socket.emit("online-users", { userIds: Array.from(onlineUsers.keys()) });
+
+    // store user in the onlineUsers map
+    onlineUsers.set(userId, socket.id);
+
+    // notify all other clients that a new user has come online
+    socket.broadcast.emit("user-online", { userId });
+
+    socket.join(`user:${userId}`); // Join a room specific to the user
+
+    socket.on("join-chat", (chatId: string) => {
+      socket.join(`chat:${chatId}`);
+    });
+
+    socket.on("leave-chat", (chatId: string) => {
+      socket.leave(`chat:${chatId}`);
+    });
+
+    // handle sending messages
+    socket.on(
+      "send-message",
+      async (data: { chatId: string; text: string }) => {
+        try {
+          const { chatId, text } = data;
+
+          const chat = await Chat.findOne({
+            _id: chatId,
+            participants: userId,
+          });
+
+          if (!chat) {
+            socket.emit("socket-error", { message: "Chat not found" });
+            return;
+          }
+
+          const message = await Message.create({
+            chat: chatId,
+            sender: userId,
+            text,
+          });
+
+          chat.lastMessage = message._id;
+          chat.lastMessageAt = new Date();
+          await chat.save();
+
+          await message.populate("sender", "name email avatar");
+
+          // emit to chat room
+          io.to(`chat:${chatId}`).emit("new-message", message);
+
+          for (const participantId of chat.participants) {
+            io.to(`user:${participantId}`).emit("new-message", message);
+          }
+        } catch (error) {
+          socket.emit("socket-error", { message: "Failed to send message" });
+        }
+      },
+    );
+
+    // TODO: Implement typing indicator LATER
+    socket.on("typing", async (data) => {});
+
+    socket.on("disconnect", () => {
+      onlineUsers.delete(userId);
+
+      // notify others
+      socket.broadcast.emit("user-offline", { userId });
+    });
+  });
+
+  return io;
+};
