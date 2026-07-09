@@ -27,4 +27,9 @@ const child = spawn("bunx", ["expo", "start", "--lan"], {
   env: { ...process.env, REACT_NATIVE_PACKAGER_HOSTNAME: ip },
 });
 
+child.on("error", (err) => {
+  console.error("Failed to start expo:", err.message);
+  process.exit(1);
+});
+
 child.on("exit", (code) => process.exit(code));
