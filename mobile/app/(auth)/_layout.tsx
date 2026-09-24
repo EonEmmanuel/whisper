@@ -6,7 +6,7 @@ const AuthLayout = () => {
 
   if (!isLoaded) return null;
 
-  if (isSignedIn) return <Redirect href={"../(tabs)"} />;
+  if (isSignedIn) return <Redirect href={"/(tabs)"} />;
 
   return <Stack screenOptions={{ headerShown: false }} />;
 };
